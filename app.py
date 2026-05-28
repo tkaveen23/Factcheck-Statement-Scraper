@@ -102,30 +102,61 @@ def get_genai_client():
 
 def extract_article(url):
     """Use newspaper3k to extract raw article data from the URL, with a BeautifulSoup fallback."""
+    text = ""
+    title = ""
+    publish_date = None
+    
+    # 1. Try standard newspaper3k extraction with a spoofed User-Agent
     try:
-        # 1. Try standard newspaper3k extraction
-        article = Article(url)
+        from newspaper import Config
+        config = Config()
+        config.browser_user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        config.request_timeout = 15
+        
+        article = Article(url, config=config)
         article.download()
         article.parse()
         
         text = article.text
-        
-        # 2. Fallback for Sinhala/Tamil sites where newspaper3k misses the text blocks
+        title = article.title
+        publish_date = article.publish_date
+    except Exception as e:
+        pass # We will let the fallback try!
+
+    # 2. Fallback for Sinhala/Tamil sites if newspaper3k failed or returned < 100 characters
+    try:
         if not text or len(text.strip()) < 100:
-            import requests
+            import cloudscraper
             from bs4 import BeautifulSoup
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-            resp = requests.get(url, headers=headers, timeout=15)
+            
+            # Initialize cloudscraper with realistic browser signatures to bypass firewalls
+            scraper = cloudscraper.create_scraper(browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'mobile': False
+            })
+            
+            resp = scraper.get(url, timeout=20)
+            resp.raise_for_status() # Throw error if it still fails (rare)
             soup = BeautifulSoup(resp.content, 'html.parser')
-            # Grab all paragraphs which usually contain the news text in local sites
+            
+            # Grab all paragraphs
             paragraphs = soup.find_all('p')
             text = '\n'.join([p.get_text(strip=True) for p in paragraphs])
             
+            if not title:
+                title_tag = soup.find('title')
+                title = title_tag.get_text(strip=True) if title_tag else "Unknown Title"
+                
+        # If both methods failed to get meaningful text
+        if not text or len(text.strip()) < 50:
+            return {"error": "Website anti-bot protection completely blocked text extraction."}
+            
         domain = urlparse(url).netloc.replace('www.', '')
-        date_str = str(article.publish_date.date()) if article.publish_date else datetime.now().strftime("%Y-%m-%d")
+        date_str = str(publish_date.date()) if publish_date else datetime.now().strftime("%Y-%m-%d")
         
         return {
-            "title": article.title or "Unknown Title",
+            "title": title or "Unknown Title",
             "text": text,
             "date": date_str,
             "source": domain,
