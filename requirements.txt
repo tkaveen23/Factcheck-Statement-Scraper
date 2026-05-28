@@ -1,0 +1,5 @@
+streamlit==1.32.0
+newspaper3k==0.2.8
+lxml_html_clean
+google-genai
+python-dotenv
